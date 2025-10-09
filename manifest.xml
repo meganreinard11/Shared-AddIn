@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+           xsi:type="TaskPaneApp">
+  <Id>f2a0a0a2-54a0-4a53-9ad9-4b9e7b8b2d10</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Lecex, LLC</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Guest Manager" />
+  <Description DefaultValue="Capture guest registrations into your workbook." />
+  <IconUrl DefaultValue="https://meganreinard11.github.io/Shared-AddIn/assets/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://meganreinard11.github.io/Shared-AddIn/assets/icon-128.png" />
+  <SupportUrl DefaultValue="https://example.com/support" />
+  <AppDomains>
+    <AppDomain>https://meganreinard11.github.io</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Workbook" />
+  </Hosts>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://meganreinard11.github.io/Shared-AddIn/index.html" />
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xsi:type="ov:VersionOverridesV1_1">
+    <Requirements>
+      <Sets DefaultMinVersion="1.1">
+        <Set Name="SharedRuntime" MinVersion="1.1" />
+        <Set Name="ExcelApi" MinVersion="1.4" />
+      </Sets>
+    </Requirements>
+
+    <Hosts>
+      <Host xsi:type="Workbook">
+        <Runtimes>
+          <!-- Shared runtime single page -->
+          <Runtime resid="Taskpane.Url" lifetime="long" />
+        </Runtimes>
+
+        <DesktopFormFactor>
+          <!-- Commands run from the same page (shared runtime) -->
+          <FunctionFile resid="Taskpane.Url" />
+
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="grpMain" label="Guest Manager" icon="Icon.32">
+                <Control xsi:type="Button" id="btnOpenTaskpane" label="Open Add-in" icon="Icon.32">
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url" />
+                  </Action>
+                </Control>
+
+                <Control xsi:type="Button" id="btnShowGuest" label="Guest Form" icon="Icon.32" superTip="Show the guest form and save entries into a 'Guests' table.">
+                  <Action xsi:type="ExecuteFunction">
+                    <FunctionName>showGuest</FunctionName>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16" DefaultValue="https://meganreinard11.github.io/Shared-AddIn/assets/icon-16.png" />
+        <bt:Image id="Icon.32" DefaultValue="https://meganreinard11.github.io/Shared-AddIn/assets/icon-32.png" />
+        <bt:Image id="Icon.80" DefaultValue="https://meganreinard11.github.io/Shared-AddIn/assets/icon-80.png" />
+        <bt:Image id="Icon.128" DefaultValue="https://meganreinard11.github.io/Shared-AddIn/assets/icon-128.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://meganreinard11.github.io/Shared-AddIn/index.html" />
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://learn.microsoft.com/office/dev/add-ins/" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GetStarted.Title" DefaultValue="Guest Manager" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="GetStarted.Description" DefaultValue="Use the Guest Form to capture registrations directly into your workbook." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>
