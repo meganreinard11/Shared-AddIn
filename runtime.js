@@ -1,36 +1,59 @@
-/* Shared runtime entry (Option B: partial injection) */
-Office.onReady(async () => {
+/* Shared runtime entry (Option B: partial injection) with recursion guards */
+let __BOOTSTRAPPED__ = false;
+let __RENDER_BUSY__ = false;
+
+Office.onReady(() => {
+  if (__BOOTSTRAPPED__) return;
+  __BOOTSTRAPPED__ = true;
+
   // Initialize error handler (reads _Settings!B4 if present)
-  ErrorHandler.init().catch(() => {});
-  showGuest(); // default view
+  try { ErrorHandler.init(); } catch {}
+
+  // Defer first render to next tick to avoid synchronous command re-entry
+  setTimeout(() => { try { showGuest(); } catch (e) { /* swallow */ } }, 0);
 });
 
 /* Ribbon entry point (ExecuteFunction) */
 window.showGuest = function (event) {
-  showGuest().finally(() => event && event.completed && event.completed());
+  // Complete the command immediately to avoid Office waiting & re-entering
+  if (event && typeof event.completed === "function") {
+    try { event.completed(); } catch {}
+  }
+  // Defer render to break any potential recursion
+  setTimeout(() => { try { showGuest(); } catch (e) { /* swallowed by EH global */ } }, 0);
 };
 
 /* ----- Render Option B: inject fragment + hydrate ----- */
 async function showGuest() {
-  const host = document.getElementById("app");
-  if (!host) return;
+  if (__RENDER_BUSY__) return; // prevent overlapping renders
+  __RENDER_BUSY__ = true;
+  try {
+    const host = document.getElementById("app");
+    if (!host) return;
 
-  host.innerHTML = '<div style="padding:16px;color:#666">Loading…</div>';
-  ensureGuestStyles();
+    host.innerHTML = '<div style="padding:16px;color:#666">Loading…</div>';
+    ensureGuestStyles();
 
-  await ErrorHandler.tryWrap("Load guest form", async () => {
-    const url = new URL("./guest-form.partial.html", window.location.href).toString();
-    const html = await fetch(url, { cache: "no-store" }).then((r) => r.text());
-    host.innerHTML = html;
-    hydrateGuestForm(host.querySelector("#guestForm"));
-  });
+    await ErrorHandler.tryWrap("Load guest form", async () => {
+      const url = new URL("./guest-form.partial.html", window.location.href).toString();
+      const html = await fetch(url, { cache: "no-store" }).then((r) => r.text());
+      // Avoid infinite innerHTML loops by only replacing when different
+      if (host.innerHTML !== html) host.innerHTML = html;
+      hydrateGuestForm(host.querySelector("#guestForm"));
+    });
+  } finally {
+    __RENDER_BUSY__ = false;
+  }
 }
 
 /* ----- Attach behaviors and save to workbook ----- */
 function hydrateGuestForm(formEl) {
   if (!formEl) return;
 
-  formEl.addEventListener("submit", (e) => {
+  // Remove any prior listener if rehydrating
+  formEl.addEventListener("submit", onSubmit, { once: true });
+
+  function onSubmit(e) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(formEl).entries());
     if (data.dob) {
@@ -67,7 +90,7 @@ function hydrateGuestForm(formEl) {
       formEl.reset();
       ErrorHandler.notify("Guest added to table.", { type: "success" });
     });
-  });
+  }
 }
 
 /* ----- UI styles for the form (added once) ----- */
