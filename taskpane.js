@@ -1,36 +1,26 @@
-// Dynamic Forms: sheet → HTML + data bindings
-// - Routes to an HTML form based on sheet name or a "form:..." tag in A1
-// - Binds inputs with data-bind="NameOrA1" to worksheet values (two-way)
-
 let lastRenderTs = 0;
-const RENDER_COOLDOWN_MS = 300;
+const RENDER_COOLDOWN_MS = 150;
 
-// Map form ids → html files
 const HtmlMap = {
-  default: "./forms/default.html",
-  colorPalette: "./forms/colorPalette.html",
+  default:  "./forms/default.html",
+  orders:   "./forms/orders.html",
+  inventory:"./forms/inventory.html",
   settings: "./forms/settings.html",
-  diagnostics: "./forms/diagnostics.html",
+  settingsCode: "./forms/settings-code.html"
 };
 
-Office.onReady(async () => {
-  // Initial render
-  await renderForActiveWorksheet();
+const SelectionRoutes = [
+  { sheet: "settings", match: { address: "B3" }, form: "settingsCode" }
+];
 
-  // Subscribe to events for sheet/tab changes && selection (fallback)
+Office.onReady(async () => {
+  await renderForActiveWorksheet();
   try {
     await Excel.run(async (ctx) => {
       const sheets = ctx.workbook.worksheets;
-
-      // Preferred: worksheets.onActivated (fires on tab switch)
       if (sheets.onActivated && sheets.onActivated.add) {
         await sheets.onActivated.add(onWorksheetActivated);
-        console.log("Subscribed: worksheets.onActivated");
-      } else {
-        console.log("onActivated not available; relying on selectionChanged");
       }
-
-      // Fallback: per-sheet selection changed
       sheets.load("items/name");
       await ctx.sync();
       for (const ws of sheets.items) {
@@ -38,8 +28,6 @@ Office.onReady(async () => {
           await ws.onSelectionChanged.add(onSelectionChanged);
         }
       }
-
-      // For newly added sheets, attach selectionChanged too
       if (sheets.onAdded && sheets.onAdded.add) {
         await sheets.onAdded.add(async (args) => {
           await Excel.run(async (inner) => {
@@ -51,7 +39,6 @@ Office.onReady(async () => {
           });
         });
       }
-
       await ctx.sync();
     });
   } catch (e) {
@@ -59,16 +46,10 @@ Office.onReady(async () => {
   }
 });
 
-async function onWorksheetActivated(event) {
-  await renderForActiveWorksheet();
-}
-
-// Fallback: throttle re-render on selection change
-async function onSelectionChanged(event) {
+async function onWorksheetActivated() { await renderForActiveWorksheet(); }
+async function onSelectionChanged() {
   const now = Date.now();
-  if (now - lastRenderTs > RENDER_COOLDOWN_MS) {
-    await renderForActiveWorksheet();
-  }
+  if (now - lastRenderTs > RENDER_COOLDOWN_MS) await renderForActiveWorksheet();
 }
 
 async function renderForActiveWorksheet() {
@@ -76,28 +57,29 @@ async function renderForActiveWorksheet() {
   await Excel.run(async (ctx) => {
     const ws = ctx.workbook.worksheets.getActiveWorksheet();
     ws.load("name");
-    const a1 = ws.getRange("A1");
-    a1.load(["text"]);
+    const a1 = ws.getRange("A1"); a1.load(["text"]);
+    const sel = ctx.workbook.getSelectedRange(); sel.load("address");
     await ctx.sync();
 
     const sheetName = (ws.name || "").trim();
     const hint = parseFormHintFromCell(a1.text);
-    const formId = pickFormId(hint, sheetName);
+    const baseFormId = pickFormId(hint, sheetName);
+
+    const selectionAddress = localizeAddress(sel.address);
+    const overrideFormId = pickSelectionOverride(sheetName, selectionAddress);
+    const finalFormId = overrideFormId || baseFormId;
 
     updateSheetBadge(sheetName);
-    await renderForm(formId, { sheetName, hint });
+    await renderForm(finalFormId, { sheetName, hint, selectionAddress, override: !!overrideFormId });
   });
 }
 
-// Detect "form:xyz" in A1
 function parseFormHintFromCell(text2d) {
   try {
     const t = (text2d && text2d[0] && text2d[0][0]) ? String(text2d[0][0]) : "";
     const m = /form\s*:\s*([a-z0-9_-]+)/i.exec(t);
     return m ? m[1].toLowerCase() : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 function pickFormId(hint, sheetName) {
@@ -107,47 +89,95 @@ function pickFormId(hint, sheetName) {
   return "default";
 }
 
+function pickSelectionOverride(sheetName, selectionAddress) {
+  const s = (sheetName || "").toLowerCase().trim();
+  const sel = normalizeA1(selectionAddress);
+  for (const rule of SelectionRoutes) {
+    if ((rule.sheet || "").toLowerCase().trim() !== s) continue;
+    const m = rule.match || {};
+    if (m.address && containsAddress(sel, normalizeA1(m.address))) return rule.form;
+  }
+  return null;
+}
+
+function localizeAddress(fullAddress) {
+  const parts = fullAddress.split("!");
+  const local = parts.length > 1 ? parts.slice(1).join("!") : parts[0];
+  return local.replace(/\$/g, "");
+}
+function normalizeA1(addr) { return String(addr || "").replace(/\$/g, "").toUpperCase(); }
+
+function containsAddress(selection, target) {
+  const selAreas = selection.split(",");
+  const tgtAreas = target.split(",");
+  for (const t of tgtAreas) {
+    const tArea = parseArea(t.trim());
+    let covered = false;
+    for (const s of selAreas) {
+      const sArea = parseArea(s.trim());
+      if (areaContains(sArea, tArea)) { covered = true; break; }
+    }
+    if (!covered) return false;
+  }
+  return true;
+}
+
+function parseArea(a1) {
+  const parts = a1.split(":");
+  if (parts.length === 1) {
+    const pt = parsePoint(parts[0]);
+    return { c1: pt.c, r1: pt.r, c2: pt.c, r2: pt.r };
+  }
+  const p1 = parsePoint(parts[0]);
+  const p2 = parsePoint(parts[1]);
+  return {
+    c1: Math.min(p1.c, p2.c),
+    r1: Math.min(p1.r, p2.r),
+    c2: Math.max(p1.c, p2.c),
+    r2: Math.max(p1.r, p2.r)
+  };
+}
+
+function parsePoint(p) {
+  const m = /^([A-Z]+)(\d+)$/.exec(String(p).toUpperCase());
+  if (!m) return { c: 1, r: 1 };
+  return { c: colToNum(m[1]), r: parseInt(m[2], 10) };
+}
+function colToNum(col) { let n = 0; for (let i=0;i<col.length;i++) n = n*26 + (col.charCodeAt(i)-64); return n; }
+function areaContains(a, b) { return a.c1 <= b.c1 && a.r1 <= b.r1 && a.c2 >= b.c2 && a.r2 >= b.r2; }
+
 function updateSheetBadge(name) {
   const el = document.getElementById("sheetName");
   if (el) el.textContent = name || "(unknown)";
 }
 
-// Load the HTML file && then wire data bindings
 async function renderForm(formId, ctx) {
   const app = document.getElementById("app");
   if (!app) return;
   const url = HtmlMap[formId] || HtmlMap.default;
-
   app.innerHTML = `<div class="loading">Loading ${formId}…</div>`;
   const html = await (await fetch(url, { cache: "no-store" })).text();
   app.innerHTML = html;
-
   await wireBindings(app);
 }
 
-// ----------------- Two-way binding layer -----------------
-
+// ------------- Two-way bindings -------------
 let sheetChangeUnsub = null;
 let debounceTimer = null;
 
 async function wireBindings(container) {
-  // 1) Initial pull from sheet → controls
   await refreshBoundControls(container);
-
-  // 2) UI → sheet on change/blur
   container.querySelectorAll("[data-bind]").forEach((el) => {
     const handler = async () => { try { await writeBinding(el); } catch (e) { console.error(e); } };
     el.addEventListener("change", handler);
     if (el.type === "text" || el.tagName === "TEXTAREA") el.addEventListener("blur", handler);
   });
 
-  // 3) Observe Excel sheet changes → UI (ExcelApi >= 1.9)
   try {
     await Excel.run(async (ctx) => {
       const ws = ctx.workbook.worksheets.getActiveWorksheet();
       if (sheetChangeUnsub && sheetChangeUnsub.remove) {
-        sheetChangeUnsub.remove();
-        sheetChangeUnsub = null;
+        sheetChangeUnsub.remove(); sheetChangeUnsub = null;
       }
       if (ws.onChanged && ws.onChanged.add) {
         sheetChangeUnsub = await ws.onChanged.add(async () => {
@@ -156,32 +186,24 @@ async function wireBindings(container) {
         });
       }
     });
-  } catch (e) {
-    console.warn("Worksheet.onChanged unavailable; form will update on tab switch.", e);
-  }
+  } catch (e) { console.warn("Worksheet.onChanged unavailable.", e); }
 }
 
 async function refreshBoundControls(container) {
   const els = [...container.querySelectorAll("[data-bind]")];
   if (els.length === 0) return;
-
   await Excel.run(async (ctx) => {
     const ws = ctx.workbook.worksheets.getActiveWorksheet();
+    const toLoad = [];
     for (const el of els) {
       const bind = (el.dataset.bind || "").trim();
       if (!bind) continue;
       const rng = await resolveRange(ctx, ws, bind);
       if (!rng) continue;
-      rng.load("values");
+      rng.load("values"); toLoad.push({ el, rng });
     }
     await ctx.sync();
-
-    // Second pass to assign values
-    for (const el of els) {
-      const bind = (el.dataset.bind || "").trim();
-      if (!bind) continue;
-      const rng = await resolveRange(ctx, ws, bind);
-      if (!rng) continue;
+    for (const { el, rng } of toLoad) {
       const v = (rng.values && rng.values[0] && rng.values[0][0]) ?? "";
       setElValueFromCell(el, v);
     }
@@ -195,18 +217,16 @@ async function writeBinding(el) {
     const ws = ctx.workbook.worksheets.getActiveWorksheet();
     const rng = await resolveRange(ctx, ws, bind);
     if (!rng) return;
-    const toWrite = getCellValueFromEl(el);
-    rng.values = [[toWrite]];
+    rng.values = [[getCellValueFromEl(el)]];
     await ctx.sync();
   });
 }
 
-// Helpers
-
 function setElValueFromCell(el, cellValue) {
   const t = (el.dataset.type || "").toLowerCase();
   if (el.type === "checkbox" || t === "boolean") {
-    el.checked = !!cellValue && String(cellValue).toLowerCase() !== "false" && cellValue !== 0 ? true : false;
+    const valStr = String(cellValue).toLowerCase();
+    el.checked = !!cellValue && valStr !== "false" && cellValue !== 0;
   } else if (t === "number") {
     el.value = (cellValue ?? "") === "" ? "" : Number(cellValue);
   } else {
@@ -224,11 +244,9 @@ function getCellValueFromEl(el) {
   return el.value ?? "";
 }
 
-// Try workbook-level named item first; else A1 address on active sheet
 async function resolveRange(ctx, ws, bind) {
   const nm = ctx.workbook.names.getItemOrNullObject(bind);
-  nm.load("name");
-  await ctx.sync();
+  nm.load("name"); await ctx.sync();
   if (!nm.isNullObject) return nm.getRange();
   try { return ws.getRange(bind); } catch { return null; }
 }
