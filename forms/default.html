@@ -4,4 +4,7 @@
   <div class="row"><label>Note</label><input data-bind="B1" data-type="string" id="note" placeholder="Type something…"/></div>
   <div class="actions"><button class="btn primary" id="save-note">Save</button></div>
 </div>
-<script type="text/javascript" src="./default.js"></script>
+<script>document.getElementById("save-note").addEventListener("click", async () => {
+  const el = document.getElementById("note");
+  el.dispatchEvent(new Event("change"));
+});</script>
