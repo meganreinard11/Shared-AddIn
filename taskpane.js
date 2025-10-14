@@ -1,39 +1,44 @@
-// Throttle to avoid overly-frequent re-renders on selection changes
+// Dynamic Forms: sheet → HTML + data bindings
+// - Routes to an HTML form based on sheet name or a "form:..." tag in A1
+// - Binds inputs with data-bind="NameOrA1" to worksheet values (two-way)
+
 let lastRenderTs = 0;
 const RENDER_COOLDOWN_MS = 300;
 
-Office.onReady(async () => {
-  if (!Office.context.requirements.isSetSupported("ExcelApi", "1.13")) {
-    console.warn("ExcelApi 1.13 not fully available. Falling back to selectionChanged heuristic.");
-  }
+// Map form ids → html files
+const HtmlMap = {
+  default:  "./forms/default.html",
+  settings: "./forms/settings.html",
+  diagnostics: "./forms/diagnostics.html",
+};
 
+Office.onReady(async () => {
   // Initial render
   await renderForActiveWorksheet();
 
-  // Subscribe to workbook-level "worksheet activated" when available
+  // Subscribe to events for sheet/tab changes && selection (fallback)
   try {
     await Excel.run(async (ctx) => {
       const sheets = ctx.workbook.worksheets;
 
-      // Workbook-level activation (preferred when available)
+      // Preferred: worksheets.onActivated (fires on tab switch)
       if (sheets.onActivated && sheets.onActivated.add) {
         await sheets.onActivated.add(onWorksheetActivated);
-        console.log("Subscribed to worksheets.onActivated.");
+        console.log("Subscribed: worksheets.onActivated");
       } else {
-        console.log("worksheets.onActivated not available; using per-sheet selectionChanged.");
+        console.log("onActivated not available; relying on selectionChanged");
       }
 
-      // Also attach selectionChanged on each sheet as a robust fallback
+      // Fallback: per-sheet selection changed
       sheets.load("items/name");
       await ctx.sync();
-
       for (const ws of sheets.items) {
         if (ws.onSelectionChanged && ws.onSelectionChanged.add) {
           await ws.onSelectionChanged.add(onSelectionChanged);
         }
       }
 
-      // If new sheets get added later, attach selectionChanged to them too
+      // For newly added sheets, attach selectionChanged too
       if (sheets.onAdded && sheets.onAdded.add) {
         await sheets.onAdded.add(async (args) => {
           await Excel.run(async (inner) => {
@@ -53,12 +58,11 @@ Office.onReady(async () => {
   }
 });
 
-// Workbook-level: fires when user changes tabs (ideal)
 async function onWorksheetActivated(event) {
   await renderForActiveWorksheet();
 }
 
-// Fallback: selection changes inside a sheet; we only re-render if cooldown passed
+// Fallback: throttle re-render on selection change
 async function onSelectionChanged(event) {
   const now = Date.now();
   if (now - lastRenderTs > RENDER_COOLDOWN_MS) {
@@ -80,12 +84,11 @@ async function renderForActiveWorksheet() {
     const formId = pickFormId(hint, sheetName);
 
     updateSheetBadge(sheetName);
-    renderForm(formId, { sheetName, hint });
+    await renderForm(formId, { sheetName, hint });
   });
 }
 
-// If A1 contains something like "form:orders" (case-insensitive), use that.
-// For Excel JS, range.text is a 2D array of strings.
+// Detect "form:xyz" in A1
 function parseFormHintFromCell(text2d) {
   try {
     const t = (text2d && text2d[0] && text2d[0][0]) ? String(text2d[0][0]) : "";
@@ -97,10 +100,9 @@ function parseFormHintFromCell(text2d) {
 }
 
 function pickFormId(hint, sheetName) {
-  if (hint && Forms[hint]) return hint;
+  if (hint && HtmlMap[hint]) return hint;
   const key = (sheetName || "").toLowerCase().trim();
-  const mapped = SheetToForm[key];
-  if (mapped && Forms[mapped]) return mapped;
+  if (HtmlMap[key]) return key;
   return "default";
 }
 
@@ -109,9 +111,123 @@ function updateSheetBadge(name) {
   if (el) el.textContent = name || "(unknown)";
 }
 
-function renderForm(formId, ctx) {
+// Load the HTML file && then wire data bindings
+async function renderForm(formId, ctx) {
   const app = document.getElementById("app");
   if (!app) return;
-  const renderFn = Forms[formId] || Forms.default;
-  app.innerHTML = renderFn(ctx);
+  const url = HtmlMap[formId] || HtmlMap.default;
+
+  app.innerHTML = `<div class="loading">Loading ${formId}…</div>`;
+  const html = await (await fetch(url, { cache: "no-store" })).text();
+  app.innerHTML = html;
+
+  await wireBindings(app);
+}
+
+// ----------------- Two-way binding layer -----------------
+
+let sheetChangeUnsub = null;
+let debounceTimer = null;
+
+async function wireBindings(container) {
+  // 1) Initial pull from sheet → controls
+  await refreshBoundControls(container);
+
+  // 2) UI → sheet on change/blur
+  container.querySelectorAll("[data-bind]").forEach((el) => {
+    const handler = async () => { try { await writeBinding(el); } catch (e) { console.error(e); } };
+    el.addEventListener("change", handler);
+    if (el.type === "text" || el.tagName === "TEXTAREA") el.addEventListener("blur", handler);
+  });
+
+  // 3) Observe Excel sheet changes → UI (ExcelApi >= 1.9)
+  try {
+    await Excel.run(async (ctx) => {
+      const ws = ctx.workbook.worksheets.getActiveWorksheet();
+      if (sheetChangeUnsub && sheetChangeUnsub.remove) {
+        sheetChangeUnsub.remove();
+        sheetChangeUnsub = null;
+      }
+      if (ws.onChanged && ws.onChanged.add) {
+        sheetChangeUnsub = await ws.onChanged.add(async () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => refreshBoundControls(container), 120);
+        });
+      }
+    });
+  } catch (e) {
+    console.warn("Worksheet.onChanged unavailable; form will update on tab switch.", e);
+  }
+}
+
+async function refreshBoundControls(container) {
+  const els = [...container.querySelectorAll("[data-bind]")];
+  if (els.length === 0) return;
+
+  await Excel.run(async (ctx) => {
+    const ws = ctx.workbook.worksheets.getActiveWorksheet();
+    for (const el of els) {
+      const bind = (el.dataset.bind || "").trim();
+      if (!bind) continue;
+      const rng = await resolveRange(ctx, ws, bind);
+      if (!rng) continue;
+      rng.load("values");
+    }
+    await ctx.sync();
+
+    // Second pass to assign values
+    for (const el of els) {
+      const bind = (el.dataset.bind || "").trim();
+      if (!bind) continue;
+      const rng = await resolveRange(ctx, ws, bind);
+      if (!rng) continue;
+      const v = (rng.values && rng.values[0] && rng.values[0][0]) ?? "";
+      setElValueFromCell(el, v);
+    }
+  });
+}
+
+async function writeBinding(el) {
+  const bind = (el.dataset.bind || "").trim();
+  if (!bind) return;
+  await Excel.run(async (ctx) => {
+    const ws = ctx.workbook.worksheets.getActiveWorksheet();
+    const rng = await resolveRange(ctx, ws, bind);
+    if (!rng) return;
+    const toWrite = getCellValueFromEl(el);
+    rng.values = [[toWrite]];
+    await ctx.sync();
+  });
+}
+
+// Helpers
+
+function setElValueFromCell(el, cellValue) {
+  const t = (el.dataset.type || "").toLowerCase();
+  if (el.type === "checkbox" || t === "boolean") {
+    el.checked = !!cellValue && String(cellValue).toLowerCase() !== "false" && cellValue !== 0 ? true : false;
+  } else if (t === "number") {
+    el.value = (cellValue ?? "") === "" ? "" : Number(cellValue);
+  } else {
+    el.value = cellValue ?? "";
+  }
+}
+
+function getCellValueFromEl(el) {
+  const t = (el.dataset.type || "").toLowerCase();
+  if (el.type === "checkbox" || t === "boolean") return el.checked ? true : false;
+  if (t === "number") {
+    const n = Number(el.value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return el.value ?? "";
+}
+
+// Try workbook-level named item first; else A1 address on active sheet
+async function resolveRange(ctx, ws, bind) {
+  const nm = ctx.workbook.names.getItemOrNullObject(bind);
+  nm.load("name");
+  await ctx.sync();
+  if (!nm.isNullObject) return nm.getRange();
+  try { return ws.getRange(bind); } catch { return null; }
 }
