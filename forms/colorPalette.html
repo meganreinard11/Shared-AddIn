@@ -51,7 +51,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   <div class="row">
     <label for="baseColor">Base color (optional)</label>
     <input id="baseColor" type="text" placeholder="#4a86e8 or hsl(220,60%,60%)" />
-    <button id="randomBase" type="button">Random Base</button>
+    <button id="randomBase" type="button" onclick="getRandomBase()">Random Base</button>
   </div>
   <div class="row">
     <label for="count">Count</label>
@@ -59,9 +59,9 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   </div>
 
   <div class="row">
-    <button id="generate" class="primary" type="button">Generate</button>
-    <button id="insert" type="button" title="Insert into sheet as a table">Insert to Sheet</button>
-    <button id="copyHex" type="button" title="Copy hex codes to clipboard">Copy HEX</button>
+    <button id="generate" class="primary" type="button" onclick="handleGenerate()">Generate</button>
+    <button id="insert" type="button" title="Insert into sheet as a table" onclick="insertToSheet()">Insert to Sheet</button>
+    <button id="copyHex" type="button" title="Copy hex codes to clipboard" onclick="copyHexList()">Copy HEX</button>
   </div>
 </section>
 <section class="palette" id="palette"></section>
@@ -69,7 +69,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   <div class="recents-header">
     <h2>Recent Palettes</h2>
     <div class="row">
-      <button id="reloadRecents" type="button">Reload Recents</button>
+      <button id="reloadRecents" type="button" onclick="refreshRecents()">Reload Recents</button>
     </div>
   </div>
   <div id="recentList" class="recent-list"></div>
@@ -517,24 +517,13 @@ async function refreshRecents() {
   } catch (_) { /* ignore */ }
 }
 
-function initUI() {
-  
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-  document.getElementById('generate').addEventListener('click', handleGenerate);
-  document.getElementById('insert').addEventListener('click', insertToSheet);
-  document.getElementById('copyHex').addEventListener('click', copyHexList);
-  document.getElementById('randomBase').addEventListener('click', () => {
+function getRandomBase() {
     const b = pickRandomBase();
     const hex = hslToHex(b.h, b.s, b.l);
     elBase().value = hex;
-  });
-  const reload = document.getElementById('reloadRecents');
-  if (reload) reload.addEventListener('click', refreshRecents);
+}
 
-  // First render + load recents
-  handleGenerate();
-  refreshRecents();
-});
+// First render + load recents
+handleGenerate();
+refreshRecents();
 </script>
