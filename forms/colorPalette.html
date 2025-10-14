@@ -518,6 +518,10 @@ async function refreshRecents() {
 }
 
 function initUI() {
+  
+}
+
+document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('generate').addEventListener('click', handleGenerate);
   document.getElementById('insert').addEventListener('click', insertToSheet);
   document.getElementById('copyHex').addEventListener('click', copyHexList);
@@ -532,7 +536,5 @@ function initUI() {
   // First render + load recents
   handleGenerate();
   refreshRecents();
-}
-
-Office.onReady(() => { initUI(); });
+});
 </script>
