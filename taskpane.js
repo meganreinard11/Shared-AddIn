@@ -21,7 +21,7 @@ const HtmlMap = {
  *   { sheet: "settings", match: { name: "CodeLink" }, form: "settingsCode" }
  */
 const SelectionRoutes = [
-  { sheet: "settings", match: { address: "A3:B3" }, form: "colorPalette" },
+  { sheet: "settings", match: { address: "B3" }, form: "colorPalette" },
 ];
 
 // Keep current selection subscription so we can add/remove dynamically
