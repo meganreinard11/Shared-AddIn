@@ -52,7 +52,7 @@ async function setupWorkbookEvents() {
       await ctx.sync();
     });
   } catch (e) {
-    console.error("Workbook event setup failed:", e);
+    alert("Workbook event setup failed:");
   }
 }
 
