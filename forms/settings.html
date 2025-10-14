@@ -1,0 +1,13 @@
+<div class="form-card">
+  <h2>Settings</h2>
+  <div class="row"><label>Company</label><input data-bind="CompanyName" data-type="string" placeholder="Contoso, Ltd."/></div>
+  <div class="row"><label>Theme</label>
+    <select data-bind="Theme" data-type="string"><option>Light</option><option>Dark</option></select>
+  </div>
+  <div class="actions"><button class="btn primary" id="save-settings">Save</button></div>
+</div>
+<script>
+  document.getElementById("save-settings").addEventListener("click", async () => {
+    document.querySelectorAll("[data-bind]").forEach(el => el.dispatchEvent(new Event("change")));
+  });
+</script>
