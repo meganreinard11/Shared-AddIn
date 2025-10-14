@@ -1,0 +1,463 @@
+(() => {
+  // --- Config --------------------------------------------------------------
+  const DATA_SHEET = '_PaletteData';
+  const RECENTS_LIMIT = 30; // max saved rows (excluding header)
+
+  // --- Utilities -----------------------------------------------------------
+  const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
+  const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  const toHex = (n) => n.toString(16).padStart(2, '0');
+
+  function hslToRgb(h, s, l) {
+    h = ((h % 360) + 360) % 360;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    let r1, g1, b1;
+    if (h < 60) [r1, g1, b1] = [c, x, 0];
+    else if (h < 120) [r1, g1, b1] = [x, c, 0];
+    else if (h < 180) [r1, g1, b1] = [0, c, x];
+    else if (h < 240) [r1, g1, b1] = [0, x, c];
+    else if (h < 300) [r1, g1, b1] = [x, 0, c];
+    else [r1, g1, b1] = [c, 0, x];
+    const r = Math.round((r1 + m) * 255);
+    const g = Math.round((g1 + m) * 255);
+    const b = Math.round((b1 + m) * 255);
+    return { r, g, b };
+  }
+  
+  const rgbToHex = ({ r, g, b }) => `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+  const hslToHex = (h, s, l) => rgbToHex(hslToRgb(h, s, l));
+
+  function rgbToHsl({ r, g, b }) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) { h = 0; s = 0; }
+    else {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        case b: h = (r - g) / d + 4; break;
+      }
+      h *= 60;
+    }
+    return { h, s, l };
+  }
+
+  function parseColor(input) {
+    if (!input) return null;
+    const t = String(input).trim().toLowerCase();
+    // #rgb or #rrggbb
+    if (t.startsWith('#')) {
+      let hex = t.slice(1);
+      if (hex.length === 3) hex = hex.split('').map(ch => ch + ch).join('');
+      if (hex.length !== 6) return null;
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      return rgbToHsl({ r, g, b });
+    }
+    // hsl(h, s%, l%)
+    if (t.startsWith('hsl(') && t.endsWith(')')) {
+      const inner = t.slice(4, -1);
+      const parts = inner.split(',').map(x => x.trim());
+      if (parts.length !== 3) return null;
+      const h = parseFloat(parts[0]);
+      const s = parseFloat(parts[1].replace('%','')) / 100;
+      const l = parseFloat(parts[2].replace('%','')) / 100;
+      if (Number.isNaN(h) || Number.isNaN(s) || Number.isNaN(l)) return null;
+      return { h, s, l };
+    }
+    return null;
+  }
+
+  const rotateHue = (h, delta) => (h + delta) % 360;
+
+  // --- Palette generators --------------------------------------------------
+  function genAuto(base, count) {
+    const start = base ? base.h : randInt(0, 359);
+    const sat = base ? base.s : 0.62;
+    light = base ? base.l : 0.55;
+    const step = 360 / count;
+    return Array.from({ length: count }, (_, i) => ({
+      h: (start + i * step) % 360,
+      s: clamp(sat + (Math.sin(i) * 0.08), 0.2, 0.9),
+      l: clamp(light + (Math.cos(i) * 0.08), 0.2, 0.85),
+    }));
+  }
+  
+  function genMonochrome(base, count) {
+    const b = base || { h: randInt(0, 359), s: 0.55, l: 0.55 };
+    const mid = Math.max(3, count);
+    return Array.from({ length: count }, (_, i) => ({
+      h: b.h,
+      s: clamp(b.s * (0.8 + (i / mid) * 0.4), 0.05, 0.95),
+      l: clamp(0.15 + (i / (count - 1)) * 0.7, 0.07, 0.93),
+    }));
+  }
+  
+  function genAnalogous(base, count) {
+    const b = base || { h: randInt(0, 359), s: 0.6, l: 0.55 };
+    const spread = 30;
+    return Array.from({ length: count }, (_, i) => {
+      const t = (i / Math.max(1, count - 1)) * 2 - 1;
+      return { h: rotateHue(b.h, t * spread), s: b.s, l: clamp(b.l + t * 0.1, 0.2, 0.8) };
+    });
+  }
+  function genComplementary(base, count) {
+    const b = base || { h: randInt(0, 359), s: 0.6, l: 0.5 };
+    const other = rotateHue(b.h, 180);
+    return Array.from({ length: count }, (_, i) => {
+      const useOther = i % 2 === 1;
+      const h = useOther ? other : b.h;
+      const l = clamp(0.3 + (i / (count - 1)) * 0.4, 0.2, 0.85);
+      return { h, s: b.s, l };
+    });
+  }
+  
+  function genSplitComplementary(base, count) {
+    const b = base || { h: randInt(0, 359), s: 0.6, l: 0.5 };
+    const h1 = rotateHue(b.h, 150);
+    const h2 = rotateHue(b.h, 210);
+    const hues = [b.h, h1, h2];
+    return Array.from({ length: count }, (_, i) => ({ h: hues[i % 3], s: b.s, l: clamp(0.35 + (i % 3) * 0.1, 0.2, 0.8) }));
+  }
+  
+  function genTriadic(base, count) {
+    const b = base || { h: randInt(0, 359), s: 0.62, l: 0.5 };
+    const hues = [b.h, rotateHue(b.h, 120), rotateHue(b.h, 240)];
+    return Array.from({ length: count }, (_, i) => ({ h: hues[i % 3], s: b.s, l: 0.5 + ((i % 3) - 1) * 0.08 }));
+  }
+  
+  function genTetradic(base, count) {
+    const b = base || { h: randInt(0, 359), s: 0.6, l: 0.5 };
+    const hues = [b.h, rotateHue(b.h, 90), rotateHue(b.h, 180), rotateHue(b.h, 270)];
+    return Array.from({ length: count }, (_, i) => ({ h: hues[i % 4], s: b.s, l: 0.5 + ((i % 4) - 1.5) * 0.07 }));
+  }
+  
+  function genNeutral(_, count) {
+    return Array.from({ length: count }, (_, i) => ({ h: 0, s: 0, l: 0.05 + (i / (count - 1)) * 0.9 }));
+  }
+  
+  function genPastel(base, count) {
+    const b = base || { h: randInt(0, 359), s: 0.35, l: 0.8 };
+    return Array.from({ length: count }, (_, i) => ({ h: rotateHue(b.h, i * (360 / count)), s: clamp(b.s * 0.6 + 0.1, 0.2, 0.5), l: clamp(0.75 + (Math.sin(i) * 0.07), 0.7, 0.9) }));
+  }
+  
+  function genVibrant(base, count) {
+    const b = base || { h: randInt(0, 359), s: 0.85, l: 0.55 };
+    return Array.from({ length: count }, (_, i) => ({ h: (b.h + i * (360 / count)) % 360, s: 0.9, l: 0.52 }));
+  }
+  
+  function genWarm(_, count) {
+    const start = 0;
+    return Array.from({ length: count }, (_, i) => ({ h: (start + i * (60 / count)) % 360, s: 0.75, l: 0.55 }));
+  }
+  
+  function genCool(_, count) {
+    const start = 180;
+    return Array.from({ length: count }, (_, i) => ({ h: (start + i * (120 / count)) % 360, s: 0.7, l: 0.5 }));
+  }
+
+  const generators = {
+    auto: genAuto,
+    monochrome: genMonochrome,
+    analogous: genAnalogous,
+    complementary: genComplementary,
+    'split-complementary': genSplitComplementary,
+    triadic: genTriadic,
+    tetradic: genTetradic,
+    neutral: genNeutral,
+    pastel: genPastel,
+    vibrant: genVibrant,
+    warm: genWarm,
+    cool: genCool,
+  };
+
+  // --- DOM helpers ---------------------------------------------------------
+  const elScheme = () => document.getElementById('scheme');
+  const elBase = () => document.getElementById('baseColor');
+  const elCount = () => document.getElementById('count');
+  const elStatus = () => document.getElementById('status');
+  const elPalette = () => document.getElementById('palette');
+  const elRecentList = () => document.getElementById('recentList');
+
+  let lastPalette = [];
+  const setStatus = (msg) => { elStatus().textContent = msg; };
+
+  function renderPalette(items) {
+    lastPalette = items.map(({ h, s, l }) => {
+      const hex = hslToHex(h, s, l);
+      const { r, g, b } = hslToRgb(h, s, l);
+      return { h, s, l, hex, r, g, b };
+    });
+    const root = elPalette();
+    root.innerHTML = '';
+    lastPalette.forEach((c) => {
+      const card = document.createElement('div');
+      card.className = 'swatch';
+      const box = document.createElement('div');
+      box.className = 'colorBox';
+      box.style.background = c.hex;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.innerHTML = `
+        <div class="hex">${c.hex}</div>
+        <div>RGB: ${c.r}, ${c.g}, ${c.b}</div>
+        <div>HSL: ${Math.round(c.h)}°, ${Math.round(c.s*100)}%, ${Math.round(c.l*100)}%</div>
+      `;
+      card.appendChild(box);
+      card.appendChild(meta);
+      card.title = 'Click to copy HEX';
+      card.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(c.hex); setStatus(`Copied ${c.hex}`); } catch { setStatus('Copy failed.'); }
+      });
+      root.appendChild(card);
+    });
+    setStatus(`${lastPalette.length} colors generated.`);
+  }
+
+  function pickRandomBase() {
+    const h = randInt(0, 359);
+    const s = 0.6 + Math.random() * 0.3;
+    const l = 0.45 + Math.random() * 0.2;
+    return { h, s: clamp(s, 0.2, 0.95), l: clamp(l, 0.2, 0.85) };
+  }
+
+  function handleGenerate() {
+    const scheme = elScheme().value;
+    const count = clamp(parseInt(elCount().value, 10) || 10, 3, 32);
+    const baseStr = elBase().value;
+    const parsed = parseColor(baseStr);
+    const base = parsed || null;
+    const gen = generators[scheme] || genAuto;
+    const items = gen(base, count);
+    renderPalette(items);
+  }
+
+  // --- Persistence (hidden sheet) -----------------------------------------
+  async function ensureDataSheet(ctx) {
+    const wb = ctx.workbook;
+    let sheet = null;
+    try {
+      sheet = wb.worksheets.getItem(DATA_SHEET);
+      sheet.load('name');
+      await ctx.sync();
+    } catch (_) {
+      sheet = wb.worksheets.add(DATA_SHEET);
+      sheet.getRange('A1:F1').values = [[ 'Timestamp', 'Label', 'Scheme', 'BaseHex', 'Count', 'HexList' ]];
+    }
+    sheet.visibility = Excel.SheetVisibility.hidden;
+    return sheet;
+  }
+
+  async function persistRecentPalette(meta, hexes) {
+    if (!Office.context || Office.context.host !== Office.HostType.Excel) return;
+    await Excel.run(async (ctx) => {
+      const sheet = await ensureDataSheet(ctx);
+      const used = sheet.getUsedRange();
+      used.load('rowCount');
+      await ctx.sync();
+      const nextRow = (used && used.rowCount ? used.rowCount : 1) + 1;
+      sheet.getRange(`A${nextRow}:F${nextRow}`).values = [[
+        new Date().toISOString(),
+        meta.label || '',
+        meta.scheme || '',
+        meta.baseHex || '',
+        hexes.length,
+        hexes.join(' ')
+      ]];
+
+      // Trim to limit (keep newest)
+      const total = nextRow;
+      const maxRows = RECENTS_LIMIT + 1; // header + N
+      if (total > maxRows) {
+        const extra = total - maxRows;
+        sheet.getRange(`A2:F${1 + extra}`).delete(Excel.DeleteShiftDirection.up);
+      }
+      sheet.visibility = Excel.SheetVisibility.hidden;
+      await ctx.sync();
+    });
+  }
+
+  async function loadRecentRows(take = 10) {
+    if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+      const pane = elRecentList();
+      if (pane) pane.innerHTML = '<em>Open in Excel to see recents.</em>';
+      return [];
+    }
+    return await Excel.run(async (ctx) => {
+      let sheet;
+      try {
+        sheet = ctx.workbook.worksheets.getItem(DATA_SHEET);
+        sheet.load('name');
+        await ctx.sync();
+      } catch (_) {
+        return [];
+      }
+      const used = sheet.getUsedRange();
+      used.load('rowCount');
+      await ctx.sync();
+      if (!used || used.rowCount <= 1) return [];
+      const total = used.rowCount;
+      const n = Math.min(take, total - 1);
+      const start = total - n + 1; // data starts at row 2
+      const rng = sheet.getRange(`A${start}:F${total}`);
+      rng.load('values');
+      await ctx.sync();
+      return rng.values.map(r => ({
+        ts: r[0], label: r[1], scheme: r[2], baseHex: r[3], count: r[4], hexes: String(r[5] || '').trim().split(' ').filter(Boolean)
+      })).reverse();
+    });
+  }
+
+  function renderRecents(list) {
+    const root = elRecentList();
+    if (!root) return;
+    root.innerHTML = '';
+    if (!list || !list.length) {
+      root.innerHTML = '<em>No recent palettes yet.</em>';
+      return;
+    }
+    list.forEach((it) => {
+      const item = document.createElement('div');
+      item.className = 'recent-item';
+      const top = document.createElement('div');
+      top.className = 'recent-top';
+      const title = document.createElement('div');
+      title.textContent = it.label || it.scheme || 'Palette';
+      const time = document.createElement('div');
+      const dt = new Date(it.ts);
+      time.textContent = isNaN(dt.getTime()) ? '' : dt.toLocaleString();
+      top.appendChild(title);
+      top.appendChild(time);
+
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+      it.hexes.slice(0, 10).forEach(hex => {
+        const c = document.createElement('div');
+        c.className = 'chip';
+        c.style.background = hex;
+        chips.appendChild(c);
+      });
+
+      item.appendChild(top);
+      item.appendChild(chips);
+      item.title = 'Click to load this palette';
+      item.addEventListener('click', () => {
+        const items = it.hexes.map(hex => {
+          const hsl = parseColor(hex);
+          return hsl ? { h: hsl.h, s: hsl.s, l: hsl.l } : null;
+        }).filter(Boolean);
+        renderPalette(items);
+        if (it.scheme) elScheme().value = it.scheme;
+        if (it.baseHex) elBase().value = it.baseHex;
+        if (it.count) elCount().value = it.count;
+        setStatus('Loaded palette from Recents.');
+      });
+      root.appendChild(item);
+    });
+  }
+
+  // --- Excel insertion -----------------------------------------------------
+  async function insertToSheet() {
+    if (!lastPalette.length) { setStatus('Generate a palette first.'); return; }
+    if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+      setStatus('Excel host not detected.');
+      return;
+    }
+
+    try {
+      await Excel.run(async (ctx) => {
+        const wb = ctx.workbook;
+        const sheetName = 'Palettes';
+        let sheet;
+        try {
+          sheet = wb.worksheets.getItem(sheetName);
+          sheet.load('name');
+          await ctx.sync();
+        } catch (_) {
+          sheet = wb.worksheets.add(sheetName);
+        }
+
+        const ts = new Date();
+        const label = `Palette_${ts.getFullYear()}-${(ts.getMonth()+1).toString().padStart(2,'0')}-${ts.getDate().toString().padStart(2,'0')} ${ts.getHours().toString().padStart(2,'0')}${ts.getMinutes().toString().padStart(2,'0')}${ts.getSeconds().toString().padStart(2,'0')}`;
+
+        const headers = [[label, 'HEX', 'R', 'G', 'B']];
+        const rows = lastPalette.map(c => [ '', c.hex, c.r, c.g, c.b ]);
+
+        const used = sheet.getUsedRange();
+        used.load('rowCount');
+        await ctx.sync();
+        const nextRow = (used && used.rowCount ? used.rowCount : 0) + 1;
+        const table = sheet.tables.add(`${sheetName}!A${nextRow}:E${nextRow + rows.length}`, true);
+        table.name = label.replace(/[^A-Za-z0-9_]/g, '_');
+        table.getHeaderRowRange().values = headers;
+        table.getDataBodyRange().values = rows;
+
+        const swatchRange = table.getDataBodyRange().getColumn(0);
+        swatchRange.format.fill.color = null;
+        swatchRange.load('rowCount');
+        await ctx.sync();
+        for (let i = 0; i < swatchRange.rowCount; i++) {
+          const rng = swatchRange.getCell(i, 0);
+          rng.format.fill.color = lastPalette[i].hex;
+        }
+
+        table.getRange().format.autofitColumns();
+        table.getRange().format.autofitRows();
+        sheet.activate();
+        await ctx.sync();
+
+        // Persist to hidden sheet
+        const scheme = elScheme().value;
+        const baseStr = elBase().value.trim();
+        const meta = { label, scheme, baseHex: baseStr || '', count: lastPalette.length };
+        await persistRecentPalette(meta, lastPalette.map(c => c.hex));
+      });
+      setStatus('Inserted palette and saved to Recents.');
+      refreshRecents();
+    } catch (e) {
+      window.ErrorHandler.handle(e);
+    }
+  }
+
+  async function copyHexList() {
+    if (!lastPalette.length) { setStatus('Generate a palette first.'); return; }
+    const text = lastPalette.map(c => c.hex).join('\n');
+    try { await navigator.clipboard.writeText(text); setStatus('HEX list copied.'); } catch { setStatus('Copy failed.'); }
+  }
+
+  async function refreshRecents() {
+    try {
+      const rows = await loadRecentRows(10);
+      renderRecents(rows);
+    } catch (_) { /* ignore */ }
+  }
+
+  function initUI() {
+    document.getElementById('generate').addEventListener('click', handleGenerate);
+    document.getElementById('insert').addEventListener('click', insertToSheet);
+    document.getElementById('copyHex').addEventListener('click', copyHexList);
+    document.getElementById('randomBase').addEventListener('click', () => {
+      const b = pickRandomBase();
+      const hex = hslToHex(b.h, b.s, b.l);
+      elBase().value = hex;
+    });
+    const reload = document.getElementById('reloadRecents');
+    if (reload) reload.addEventListener('click', refreshRecents);
+
+    // First render + load recents
+    handleGenerate();
+    refreshRecents();
+  }
+
+  if (window.Office) {
+    Office.onReady(() => { initUI(); });
+  } else {
+    document.addEventListener('DOMContentLoaded', initUI);
+  }
+})();
