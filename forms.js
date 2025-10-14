@@ -63,6 +63,7 @@ const Forms = {
       <div id="recentList" class="recent-list"></div>
     </section>
     <link rel="stylesheet" href="./colorPalette.css"/>
+    <script src="./colorPalette.js"></script>
     </div>
   `,
 
