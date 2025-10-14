@@ -12,6 +12,59 @@ const Forms = {
     </div>
   `,
 
+  colorPalete: (ctx) => `
+    <div class="form-card">
+    <section class="controls">
+      <div class="row">
+        <label for="scheme">Scheme</label>
+        <select id="scheme">
+          <option value="auto">Auto</option>
+          <option value="monochrome">Monochrome</option>
+          <option value="analogous">Analogous</option>
+          <option value="complementary">Complementary</option>
+          <option value="split-complementary">Split‑Complementary</option>
+          <option value="triadic">Triadic</option>
+          <option value="tetradic">Tetradic</option>
+          <option value="neutral">Neutral (Grays)</option>
+          <option value="pastel">Pastel</option>
+          <option value="vibrant">Vibrant</option>
+          <option value="warm">Warm</option>
+          <option value="cool">Cool</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label for="baseColor">Base color (optional)</label>
+        <input id="baseColor" type="text" placeholder="#4a86e8 or hsl(220,60%,60%)" />
+        <button id="randomBase" type="button">Random Base</button>
+      </div>
+
+      <div class="row">
+        <label for="count">Count</label>
+        <input id="count" type="number" min="3" max="32" value="10" />
+      </div>
+
+      <div class="row">
+        <button id="generate" class="primary" type="button">Generate</button>
+        <button id="insert" type="button" title="Insert into sheet as a table">Insert to Sheet</button>
+        <button id="copyHex" type="button" title="Copy hex codes to clipboard">Copy HEX</button>
+      </div>
+    </section>
+
+    <section class="palette" id="palette"></section>
+
+    <section class="recents">
+      <div class="recents-header">
+        <h2>Recent Palettes</h2>
+        <div class="row">
+          <button id="reloadRecents" type="button">Reload Recents</button>
+        </div>
+      </div>
+      <div id="recentList" class="recent-list"></div>
+    </section>
+    </div>
+  `,
+
   orders: (ctx) => `
     <div class="form-card">
       <h2>Orders</h2>
