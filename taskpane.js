@@ -7,7 +7,8 @@ const RENDER_COOLDOWN_MS = 300;
 
 // Map form ids → html files
 const HtmlMap = {
-  default:  "./forms/default.html",
+  default: "./forms/default.html",
+  colorPalette: "./forms/colorPalette.html",
   settings: "./forms/settings.html",
   diagnostics: "./forms/diagnostics.html",
 };
