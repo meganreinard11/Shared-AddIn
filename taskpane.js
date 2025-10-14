@@ -1,53 +1,127 @@
+// Dynamic Forms: selection wiring + address and NAMED RANGE routing
 let lastRenderTs = 0;
-const RENDER_COOLDOWN_MS = 150;
+const RENDER_COOLDOWN_MS = 120;
+let lastRenderedFormId = null;
 
+// Map form ids → html files
 const HtmlMap = {
   default:  "./forms/default.html",
   settings: "./forms/settings.html",
-  colorPalette: "./forms/colorPalette.html"
+  settingsCode: "./forms/settings-code.html"
 };
 
+/**
+ * Selection-based overrides per sheet.
+ * Each rule supports either:
+ *   - match.address: A1 address on the sheet (e.g., "B3" or "A2:C10")
+ *   - match.name:    Workbook/worksheet named range (e.g., "CodeLink")
+ *
+ * Examples:
+ *   { sheet: "settings", match: { address: "B3" }, form: "settingsCode" }
+ *   { sheet: "settings", match: { name: "CodeLink" }, form: "settingsCode" }
+ */
 const SelectionRoutes = [
-  { sheet: "settings", match: { address: "B3" }, form: "colorPalette" }
+  { sheet: "settings", match: { address: "B3" }, form: "settingsCode" },
+  // { sheet: "settings", match: { name: "CodeLink" }, form: "settingsCode" },
 ];
+
+// Keep current selection subscription so we can add/remove dynamically
+let selectionSub = null;
+let selectionSubSheet = null;
 
 Office.onReady(async () => {
   await renderForActiveWorksheet();
+  await setupWorkbookEvents();
+});
+
+async function setupWorkbookEvents() {
   try {
     await Excel.run(async (ctx) => {
       const sheets = ctx.workbook.worksheets;
+
+      // Re-render + adjust selection wiring on tab switch
       if (sheets.onActivated && sheets.onActivated.add) {
-        await sheets.onActivated.add(onWorksheetActivated);
+        await sheets.onActivated.add(async () => {
+          await renderForActiveWorksheet();
+          await manageSelectionSubscription();
+        });
       }
-      sheets.load("items/name");
+
+      // Initial selection wiring for the current active sheet
+      await manageSelectionSubscription();
+
       await ctx.sync();
-      for (const ws of sheets.items) {
-        if (ws.onSelectionChanged && ws.onSelectionChanged.add) {
-          await ws.onSelectionChanged.add(onSelectionChanged);
+    });
+  } catch (e) {
+    console.error("Workbook event setup failed:", e);
+  }
+}
+
+// Add/remove selectionChanged depending on whether ACTIVE sheet has any SelectionRoutes
+async function manageSelectionSubscription() {
+  try {
+    await Excel.run(async (ctx) => {
+      const ws = ctx.workbook.worksheets.getActiveWorksheet();
+      ws.load("name");
+      await ctx.sync();
+      const sheetName = ws.name || "";
+
+      const needsSelection = hasSelectionRoutesForSheet(sheetName);
+
+      // Remove existing listener if not needed or sheet changed
+      if (selectionSub && selectionSub.remove) {
+        if (!needsSelection || (selectionSubSheet || "") !== sheetName) {
+          await selectionSub.remove();
+          selectionSub = null;
+          selectionSubSheet = null;
         }
       }
-      if (sheets.onAdded && sheets.onAdded.add) {
-        await sheets.onAdded.add(async (args) => {
-          await Excel.run(async (inner) => {
-            const newWs = inner.workbook.worksheets.getItem(args.worksheetId);
-            if (newWs.onSelectionChanged && newWs.onSelectionChanged.add) {
-              await newWs.onSelectionChanged.add(onSelectionChanged);
-            }
-            await inner.sync();
-          });
-        });
+
+      // Add when needed
+      if (needsSelection && !selectionSub) {
+        if (ws.onSelectionChanged && ws.onSelectionChanged.add) {
+          selectionSub = await ws.onSelectionChanged.add(onSelectionChanged);
+          selectionSubSheet = sheetName;
+        }
       }
       await ctx.sync();
     });
   } catch (e) {
-    console.error("Event subscription error:", e);
+    console.warn("manageSelectionSubscription error:", e);
   }
-});
+}
 
-async function onWorksheetActivated() { await renderForActiveWorksheet(); }
+// Handle selection changes only when needed; reload only if target form differs
 async function onSelectionChanged() {
   const now = Date.now();
-  if (now - lastRenderTs > RENDER_COOLDOWN_MS) await renderForActiveWorksheet();
+  if (now - lastRenderTs < RENDER_COOLDOWN_MS) return;
+
+  try {
+    await Excel.run(async (ctx) => {
+      const ws = ctx.workbook.worksheets.getActiveWorksheet();
+      ws.load("name");
+      const a1 = ws.getRange("A1"); a1.load(["text"]);
+      const sel = ctx.workbook.getSelectedRange(); sel.load("address");
+      await ctx.sync();
+
+      const sheetName = (ws.name || "").trim();
+      const hint = parseFormHintFromCell(a1.text);
+      const baseFormId = pickFormId(hint, sheetName);
+
+      const selectionAddress = localizeAddress(sel.address);
+      const overrideFormId = await pickSelectionOverride(ctx, sheetName, selectionAddress);
+      const nextFormId = overrideFormId || baseFormId;
+
+      // Only reload if the form is changing
+      if (nextFormId !== lastRenderedFormId) {
+        lastRenderTs = Date.now();
+        updateSheetBadge(sheetName);
+        await renderForm(nextFormId, { sheetName, hint, selectionAddress, override: !!overrideFormId });
+      }
+    });
+  } catch (e) {
+    console.error("onSelectionChanged error:", e);
+  }
 }
 
 async function renderForActiveWorksheet() {
@@ -64,13 +138,18 @@ async function renderForActiveWorksheet() {
     const baseFormId = pickFormId(hint, sheetName);
 
     const selectionAddress = localizeAddress(sel.address);
-    const overrideFormId = pickSelectionOverride(sheetName, selectionAddress);
+    const overrideFormId = await pickSelectionOverride(ctx, sheetName, selectionAddress);
     const finalFormId = overrideFormId || baseFormId;
 
     updateSheetBadge(sheetName);
-    await renderForm(finalFormId, { sheetName, hint, selectionAddress, override: !!overrideFormId });
+
+    if (finalFormId !== lastRenderedFormId) {
+      await renderForm(finalFormId, { sheetName, hint, selectionAddress, override: !!overrideFormId });
+    }
   });
 }
+
+// ---------- Routing helpers ----------
 
 function parseFormHintFromCell(text2d) {
   try {
@@ -87,19 +166,64 @@ function pickFormId(hint, sheetName) {
   return "default";
 }
 
-function pickSelectionOverride(sheetName, selectionAddress) {
+function hasSelectionRoutesForSheet(sheetName) {
+  const s = (sheetName || "").toLowerCase().trim();
+  return SelectionRoutes.some(r => (r.sheet || "").toLowerCase().trim() === s);
+}
+
+// Async: can resolve named ranges within rules
+async function pickSelectionOverride(ctx, sheetName, selectionAddress) {
   const s = (sheetName || "").toLowerCase().trim();
   const sel = normalizeA1(selectionAddress);
+  if (!hasSelectionRoutesForSheet(s)) return null;
+
   for (const rule of SelectionRoutes) {
     if ((rule.sheet || "").toLowerCase().trim() !== s) continue;
     const m = rule.match || {};
-    if (m.address && containsAddress(sel, normalizeA1(m.address))) return rule.form;
+
+    // Address match (fast path)
+    if (m.address && containsAddress(sel, normalizeA1(m.address))) {
+      return rule.form;
+    }
+
+    // Named range match
+    if (m.name) {
+      // Try workbook-scoped name first
+      const nm = ctx.workbook.names.getItemOrNullObject(m.name);
+      nm.load(["name", "type"]);
+      await ctx.sync();
+
+      if (!nm.isNullObject) {
+        try {
+          const r = nm.getRange();
+          r.load("address");
+          await ctx.sync();
+          // address like "Settings!$B$3" → ensure it's on the same sheet
+          const parts = String(r.address || "").split("!");
+          const sheetFromName = parts.length > 1 ? parts[0].replace(/^'/, "").replace(/'$/, "") : s;
+          if (sheetFromName.toLowerCase().trim() !== s) {
+            continue; // name exists but scoped to a different sheet
+          }
+          const localA1 = localizeAddress(r.address);
+          if (containsAddress(sel, normalizeA1(localA1))) {
+            return rule.form;
+          }
+        } catch (e) {
+          // name exists but not a range; ignore
+        }
+      }
+
+      // Optionally: look for a worksheet-scoped name with same identifier
+      // (Excel JS exposes most names via workbook.names; skipping extra search for brevity)
+    }
   }
   return null;
 }
 
+// ---------- Address utilities ----------
+
 function localizeAddress(fullAddress) {
-  const parts = fullAddress.split("!");
+  const parts = String(fullAddress || "").split("!");
   const local = parts.length > 1 ? parts.slice(1).join("!") : parts[0];
   return local.replace(/\$/g, "");
 }
@@ -144,6 +268,8 @@ function parsePoint(p) {
 function colToNum(col) { let n = 0; for (let i=0;i<col.length;i++) n = n*26 + (col.charCodeAt(i)-64); return n; }
 function areaContains(a, b) { return a.c1 <= b.c1 && a.r1 <= b.r1 && a.c2 >= b.c2 && a.r2 >= b.r2; }
 
+// ---------- UI & rendering ----------
+
 function updateSheetBadge(name) {
   const el = document.getElementById("sheetName");
   if (el) el.textContent = name || "(unknown)";
@@ -156,6 +282,7 @@ async function renderForm(formId, ctx) {
   app.innerHTML = `<div class="loading">Loading ${formId}…</div>`;
   const html = await (await fetch(url, { cache: "no-store" })).text();
   app.innerHTML = html;
+  lastRenderedFormId = formId; // track current
   await wireBindings(app);
 }
 
