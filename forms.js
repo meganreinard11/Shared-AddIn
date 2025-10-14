@@ -12,7 +12,7 @@ const Forms = {
     </div>
   `,
 
-  colorPalete: (ctx) => `
+  colorPalette: (ctx) => `
     <div class="form-card">
     <section class="controls">
       <div class="row">
