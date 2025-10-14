@@ -20,6 +20,10 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .chips { display: flex; gap: 4px; flex-wrap: wrap; }
 .chip { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #e6e8ee; }
 </style>
+<header class="app-header">
+  <h1>Color Palette Generator</h1>
+  <p class="subtitle">Choose an optional scheme and generate swatches. Insert into the sheet as a table.</p>
+</header>
 <section class="controls">
   <div class="row">
     <label for="scheme">Scheme</label>
@@ -47,6 +51,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
     <label for="count">Count</label>
     <input id="count" type="number" min="3" max="32" value="10" />
   </div>
+
   <div class="row">
     <button id="generate" class="primary" type="button">Generate</button>
     <button id="insert" type="button" title="Insert into sheet as a table">Insert to Sheet</button>
@@ -63,6 +68,9 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   </div>
   <div id="recentList" class="recent-list"></div>
 </section>
+<footer class="app-footer">
+  <span id="status">Ready.</span>
+</footer>
 <script type="text/javascript">
 (() => {
   // --- Config --------------------------------------------------------------
