@@ -2,15 +2,13 @@ let lastRenderTs = 0;
 const RENDER_COOLDOWN_MS = 150;
 
 const HtmlMap = {
-  default:  "./forms/overview.html",
-  orders:   "./forms/orders.html",
-  inventory:"./forms/inventory.html",
+  default:  "./forms/default.html",
   settings: "./forms/settings.html",
-  settingsCode: "./forms/settings-code.html"
+  colorPalette: "./forms/colorPalette.html"
 };
 
 const SelectionRoutes = [
-  { sheet: "settings", match: { address: "B3" }, form: "settingsCode" }
+  { sheet: "settings", match: { address: "B3" }, form: "colorPalette" }
 ];
 
 Office.onReady(async () => {
