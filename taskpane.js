@@ -2,7 +2,7 @@ let lastRenderTs = 0;
 const RENDER_COOLDOWN_MS = 150;
 
 const HtmlMap = {
-  default:  "./forms/default.html",
+  default:  "./forms/overview.html",
   orders:   "./forms/orders.html",
   inventory:"./forms/inventory.html",
   settings: "./forms/settings.html",
