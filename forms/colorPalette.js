@@ -437,15 +437,17 @@ async function refreshRecents() {
   } catch (_) { /* ignore */ }
 }
 
+function getRandomBase() {
+  const b = pickRandomBase();
+  const hex = hslToHex(b.h, b.s, b.l);
+  elBase().value = hex;
+}
+
 function initUI() {
   document.getElementById('generate').addEventListener('click', handleGenerate);
   document.getElementById('insert').addEventListener('click', insertToSheet);
   document.getElementById('copyHex').addEventListener('click', copyHexList);
-  document.getElementById('randomBase').addEventListener('click', () => {
-    const b = pickRandomBase();
-    const hex = hslToHex(b.h, b.s, b.l);
-    elBase().value = hex;
-  });
+  document.getElementById('randomBase').addEventListener('click', getRandomBase);
   const reload = document.getElementById('reloadRecents');
   if (reload) reload.addEventListener('click', refreshRecents);
 
