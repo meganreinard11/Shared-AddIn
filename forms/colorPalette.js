@@ -79,7 +79,7 @@ const rotateHue = (h, delta) => (h + delta) % 360;
 function genAuto(base, count) {
   const start = base ? base.h : randInt(0, 359);
   const sat = base ? base.s : 0.62;
-  light = base ? base.l : 0.55;
+  const light = base ? base.l : 0.55;
   const step = 360 / count;
   return Array.from({ length: count }, (_, i) => ({
     h: (start + i * step) % 360,
